@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 与 path_provider getTemporaryDirectory()（应用 cache）一致，供复制图片到剪贴板 -->
+    <cache-path name="mi_clipboard" path="." />
+</paths>

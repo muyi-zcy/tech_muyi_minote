@@ -1,0 +1,37 @@
+diff --git a/lib/src/default_editor/document_gestures_touch_android.dart b/lib/src/default_editor/document_gestures_touch_android.dart
+--- a/lib/src/default_editor/document_gestures_touch_android.dart
++++ b/lib/src/default_editor/document_gestures_touch_android.dart
+@@ -665,13 +665,18 @@
+     // Calculate the y-value of the selection extent side of the selected content so that we
+     // can ensure they're visible.
+     final selectionRectInDocumentLayout =
+-        widget.getDocumentLayout().getRectForSelection(selection.base, selection.extent)!;
++        widget.getDocumentLayout().getRectForSelection(selection.base, selection.extent);
++    // After undo or structural edits, layout may not expose the selection rect yet.
++    if (selectionRectInDocumentLayout == null) {
++      return;
++    }
+     final extentOffsetInViewport = widget.document.getAffinityForSelection(selection) == TextAffinity.downstream
+         ? _documentOffsetToViewportOffset(selectionRectInDocumentLayout.bottomCenter)
+         : _documentOffsetToViewportOffset(selectionRectInDocumentLayout.topCenter);
+ 
+-    widget.dragHandleAutoScroller.value!.ensureOffsetIsVisible(extentOffsetInViewport);
++    widget.dragHandleAutoScroller.value?.ensureOffsetIsVisible(extentOffsetInViewport);
+   }
+ 
+   void _onDocumentChange(_) {
+diff --git a/lib/src/default_editor/document_gestures_touch_ios.dart b/lib/src/default_editor/document_gestures_touch_ios.dart
+--- a/lib/src/default_editor/document_gestures_touch_ios.dart
++++ b/lib/src/default_editor/document_gestures_touch_ios.dart
+@@ -462,7 +462,11 @@
+     // Calculate the y-value of the selection extent side of the selected content so that we
+     // can ensure they're visible.
+     final selectionRectInDocumentLayout =
+-        widget.getDocumentLayout().getRectForSelection(selection.base, selection.extent)!;
++        widget.getDocumentLayout().getRectForSelection(selection.base, selection.extent);
++    if (selectionRectInDocumentLayout == null) {
++      return;
++    }
+     final extentOffsetInViewport = widget.document.getAffinityForSelection(selection) == TextAffinity.downstream
+         ? _documentOffsetToViewportOffset(selectionRectInDocumentLayout.bottomCenter)
+         : _documentOffsetToViewportOffset(selectionRectInDocumentLayout.topCenter);

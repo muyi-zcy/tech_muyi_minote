@@ -1,17 +1,44 @@
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:super_editor/super_editor.dart';
 
 import 'blockquote_newline_command.dart';
+import 'document_selection_sanitize.dart';
 import 'editor_selection_toolbar.dart';
-import 'normalized_paste_handler.dart';
+import 'mi_floating_toolbar_clamp.dart';
+import 'mi_image_block_tap_handler.dart';
+import 'mi_clipboard_image.dart';
+import 'mi_http_fetch_bytes.dart';
+import 'mi_io_file_bytes.dart';
+import 'mi_note_image_layout.dart';
+import 'local_image_component.dart';
 import 'mi_blockquote_component.dart';
+import 'mi_inline_image.dart';
+import 'mi_inline_image_builders_phase.dart';
+import 'mi_task_component.dart';
+import 'normalized_paste_handler.dart';
+import 'note_attachment_store.dart';
+import 'platform_file_read_bytes.dart';
 import 'note_editor_format.dart';
+import 'note_file_attachment.dart';
+import 'voice_record_sheet.dart';
 
 void main() {
   runApp(const MyApp());
+}
+
+/// 底部主工具栏「智能排版 / 语音 / 图片 / 手写 / 待办」。
+enum NoteEditorBottomAction {
+  smartLayout,
+  voice,
+  image,
+  handwriting,
+  todo,
 }
 
 /// 跟随系统深浅色；默认（浅色）为白底。
@@ -53,6 +80,8 @@ class XiaomiStyleNoteEditorPage extends StatefulWidget {
 class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     with WidgetsBindingObserver {
   final GlobalKey _docLayoutKey = GlobalKey();
+  /// 正文编辑区（含滚动），用于将选区浮动菜单限制在可视编辑范围内。
+  final GlobalKey _editorBodyKey = GlobalKey();
   final TextEditingController _titleController = TextEditingController();
 
   late final MutableDocument _document;
@@ -73,6 +102,8 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
 
   late final SuperEditorAndroidControlsController _androidEditControls;
   late final SuperEditorIosControlsController _iosEditControls;
+
+  final MiInlineImageBuildersPhase _inlineImageBuildersPhase = MiInlineImageBuildersPhase();
 
   /// 仅正文 [SuperEditor] 聚焦时显示底部工具栏（标题聚焦不显示）。
   bool get _bodyHasEditorFocus => _editorFocusNode.hasFocus;
@@ -114,6 +145,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
   @override
   void initState() {
     super.initState();
+    NoteAttachmentStore.ensureInitialized();
     WidgetsBinding.instance.addObserver(this);
     _document = MutableDocument(
       nodes: [
@@ -137,7 +169,11 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
         insertNewlineInBlockquoteRequestHandler,
         ...defaultRequestHandlers,
       ],
-      historyGroupingPolicy: defaultMergePolicy,
+      // 不合并「纯选区/ composing」到上一条内容事务，避免撤销重放后选区类型与节点不一致
+      //（例如正文节点 id + UpstreamDownstreamNodePosition 导致 TextComponent 抛错）。
+      historyGroupingPolicy: const HistoryGroupingPolicyList([
+        mergeRapidTextInputPolicy,
+      ]),
       reactionPipeline: List.from(defaultEditorReactions),
       isHistoryEnabled: true,
     );
@@ -149,6 +185,11 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     );
 
     _editListener = FunctionalEditListener((_) {
+      final cur = _composer.selection;
+      final fixed = sanitizeDocumentSelection(_document, cur);
+      if (fixed != cur) {
+        _composer.setSelectionWithReason(fixed, SelectionReason.contentChange);
+      }
       if (mounted) setState(() {});
     });
     _editor.addListener(_editListener);
@@ -164,22 +205,38 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     _androidEditControls = SuperEditorAndroidControlsController(
       controlsColor: const Color(0xFFFF9100),
       toolbarBuilder: (context, mobileToolbarKey, focalPoint) {
-        return MiEditorFloatingToolbar(
-          toolbarKey: mobileToolbarKey,
-          selectionListenable: _composer.selectionNotifier,
-          commonOps: _commonOps,
-          onAfterAction: _androidEditControls.hideToolbar,
+        return MiFloatingToolbarClamp(
+          editorBodyKey: _editorBodyKey,
+          scrollController: _scrollController,
+          child: MiEditorFloatingToolbar(
+            toolbarKey: mobileToolbarKey,
+            selectionListenable: _composer.selectionNotifier,
+            document: _document,
+            commonOps: _commonOps,
+            onAfterAction: _androidEditControls.hideToolbar,
+            onPasteWithImageFirst: _pasteFromToolbar,
+            onCopyImagePixels: _toolbarCopyImagePixels,
+            onToggleImageHalfFullWidth: _toggleSelectedImageWidthHalfFull,
+          ),
         );
       },
     );
     _iosEditControls = SuperEditorIosControlsController(
       handleColor: const Color(0xFFFF9100),
       toolbarBuilder: (context, mobileToolbarKey, focalPoint) {
-        return MiEditorFloatingToolbar(
-          toolbarKey: mobileToolbarKey,
-          selectionListenable: _composer.selectionNotifier,
-          commonOps: _commonOps,
-          onAfterAction: _iosEditControls.hideToolbar,
+        return MiFloatingToolbarClamp(
+          editorBodyKey: _editorBodyKey,
+          scrollController: _scrollController,
+          child: MiEditorFloatingToolbar(
+            toolbarKey: mobileToolbarKey,
+            selectionListenable: _composer.selectionNotifier,
+            document: _document,
+            commonOps: _commonOps,
+            onAfterAction: _iosEditControls.hideToolbar,
+            onPasteWithImageFirst: _pasteFromToolbar,
+            onCopyImagePixels: _toolbarCopyImagePixels,
+            onToggleImageHalfFullWidth: _toggleSelectedImageWidthHalfFull,
+          ),
         );
       },
     );
@@ -275,6 +332,8 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     for (final node in _document) {
       if (node is TextNode) {
         n += node.text.toPlainText().length;
+      } else if (node is ImageNode || node is FileAttachmentNode) {
+        n += 1;
       }
     }
     return n;
@@ -293,8 +352,463 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     return true;
   }
 
+  /// 合并连续空段落（保留每段的第一块空段落）。
+  void _applySmartLayout() {
+    final toDelete = <String>[];
+    ParagraphNode? prevEmptyPara;
+    for (final node in _document) {
+      if (node is! ParagraphNode) {
+        prevEmptyPara = null;
+        continue;
+      }
+      if (node.getMetadataValue('blockType') != paragraphAttribution) {
+        prevEmptyPara = null;
+        continue;
+      }
+      final empty = node.text.toPlainText().trim().isEmpty;
+      if (empty) {
+        if (prevEmptyPara != null) {
+          toDelete.add(node.id);
+        } else {
+          prevEmptyPara = node;
+        }
+      } else {
+        prevEmptyPara = null;
+      }
+    }
+    if (toDelete.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('没有需要合并的连续空段落')),
+        );
+      }
+      return;
+    }
+    for (final id in toDelete) {
+      _editor.execute([DeleteNodeRequest(nodeId: id)]);
+    }
+    setState(() {});
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已合并 ${toDelete.length} 处连续空段落')),
+      );
+    }
+  }
+
+  /// Android（尤其 HyperOS 系统相册）上 [ImagePicker] 易触发转场异常；改用 [FilePicker] 走文档选择器。
+  Future<({Uint8List bytes, String ext})?> _pickGalleryImage() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!mounted) return null;
+      // 默认压缩会在公共 Pictures 目录 createTempFile，分区存储下常 Permission denied 崩溃。
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+        allowCompression: false,
+      );
+      if (result == null || result.files.isEmpty) return null;
+      final f = result.files.single;
+      final bytes = await readPlatformFileBytes(f);
+      if (bytes != null && bytes.isNotEmpty) {
+        return (bytes: bytes, ext: _extensionFromPlatformFile(f));
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未能读取图片数据，请换一张图或稍后重试')),
+        );
+      }
+      return null;
+    }
+
+    final picker = ImagePicker();
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 100,
+    );
+    if (x == null) return null;
+    final bytes = await x.readAsBytes();
+    return (bytes: bytes, ext: _guessImageExtension(x.path, x.mimeType));
+  }
+
+  String _extensionFromPlatformFile(PlatformFile f) {
+    var e = (f.extension ?? '').toLowerCase();
+    if (e.startsWith('.')) e = e.substring(1);
+    if (e.isNotEmpty) return e;
+    final name = f.name.toLowerCase();
+    final dot = name.lastIndexOf('.');
+    if (dot >= 0 && dot < name.length - 1) {
+      return name.substring(dot + 1);
+    }
+    return 'jpg';
+  }
+
+  /// 系统相册返回后 [MutableDocumentComposer.selection] 常被清空，插入命令会静默失败。
+  DocumentSelection? _fallbackCaretLastTextNode() {
+    TextNode? last;
+    for (final node in _document) {
+      if (node is TextNode) last = node;
+    }
+    if (last == null) return null;
+    return DocumentSelection.collapsed(
+      position: DocumentPosition(
+        nodeId: last.id,
+        nodePosition: last.endPosition,
+      ),
+    );
+  }
+
+  /// 在选区处插入块级节点（图、语音条、待办等）。
+  ///
+  /// 相册 / 录音抽屉关闭后 [MutableDocumentComposer.selection] 常被清空；若先 [execute] 恢复选区、
+  /// 再 [execute] 插入，会变成**两次**撤销且第二次仍可能因选区未就绪而静默失败。此处把「恢复选区 + 插入」
+  /// 放进**同一次** [Editor.execute]，保证单步撤销且与 [InsertNodeAtCaretCommand] 行为一致。
+  ///
+  /// 返回是否实际执行了 [Editor.execute]（未插入时为 `false`）。
+  bool _insertBlockNodeWithResolvedSelection({
+    required DocumentNode blockNode,
+    required DocumentSelection? selectionBeforeAsync,
+    required String needCaretHint,
+  }) {
+    if (!mounted) return false;
+
+    final requests = <EditRequest>[];
+
+    final rawSelection = _composer.selection;
+    DocumentSelection? anchor = rawSelection;
+    if (anchor == null) {
+      anchor = selectionBeforeAsync ?? _fallbackCaretLastTextNode();
+    }
+    anchor = sanitizeDocumentSelection(_document, anchor);
+    if (anchor == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(needCaretHint)),
+      );
+      return false;
+    }
+    if (rawSelection == null || rawSelection != anchor) {
+      requests.add(
+        ChangeSelectionRequest(
+          anchor,
+          SelectionChangeType.placeCaret,
+          SelectionReason.userInteraction,
+        ),
+      );
+    }
+
+    if (_editorFocusNode.canRequestFocus) {
+      _editorFocusNode.requestFocus();
+    }
+
+    final anchorId = anchor.extent.nodeId;
+    final selectedNode = _document.getNodeById(anchorId);
+    if (selectedNode == null) return false;
+
+    // 与官方示例一致：块级节点 + [InsertNodeAtCaretRequest]；非 [ParagraphNode] 时用 [InsertNodeAfterNodeRequest]。
+    if (!anchor.isCollapsed) {
+      requests.add(DeleteContentRequest(documentRange: anchor.normalize(_document)));
+    }
+    if (selectedNode is ParagraphNode) {
+      requests.add(InsertNodeAtCaretRequest(node: blockNode));
+    } else {
+      requests.add(
+        InsertNodeAfterNodeRequest(
+          existingNodeId: selectedNode.id,
+          newNode: blockNode,
+        ),
+      );
+      requests.add(
+        ChangeSelectionRequest(
+          DocumentSelection.collapsed(
+            position: DocumentPosition(
+              nodeId: blockNode.id,
+              nodePosition: const UpstreamDownstreamNodePosition.downstream(),
+            ),
+          ),
+          SelectionChangeType.insertContent,
+          SelectionReason.userInteraction,
+        ),
+      );
+    }
+
+    _editor.execute(requests);
+    if (mounted) setState(() {});
+    _refocusEditor();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {});
+      if (_editorFocusNode.canRequestFocus) {
+        _editorFocusNode.requestFocus();
+      }
+    });
+    return true;
+  }
+
+  void _insertImageAfterPickerResolved({
+    required String ref,
+    required bool handwriting,
+    required DocumentSelection? selectionBeforePick,
+  }) {
+    final imageNode = ImageNode(
+      id: Editor.createNodeId(),
+      imageUrl: ref,
+      altText: handwriting ? '手写' : '',
+    );
+    _insertBlockNodeWithResolvedSelection(
+      blockNode: imageNode,
+      selectionBeforeAsync: selectionBeforePick,
+      needCaretHint: '请先点击正文输入区再插入图片',
+    );
+  }
+
+  String _extensionFromImageUrl(String url) {
+    final q = url.indexOf('?');
+    final path = q >= 0 ? url.substring(0, q) : url;
+    final dot = path.lastIndexOf('.');
+    if (dot >= 0 && dot < path.length - 1) {
+      return path.substring(dot + 1).toLowerCase();
+    }
+    return 'png';
+  }
+
+  String _extensionForRawImageBytes(Uint8List bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8) return 'jpg';
+    if (bytes.length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50) return 'png';
+    if (bytes.length >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49) return 'gif';
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return 'webp';
+    }
+    return 'png';
+  }
+
+  Future<Uint8List?> _readBytesForImageNode(ImageNode node) async {
+    final url = node.imageUrl;
+    if (url.startsWith('minote://')) {
+      final cached = NoteAttachmentStore.peekInlineImageBytes(url);
+      if (cached != null) return cached;
+      final p = await NoteAttachmentStore.getLocalPath(url);
+      if (p == null) return null;
+      return readLocalFileBytes(p);
+    }
+    if (url.startsWith('file://')) {
+      if (kIsWeb) return null;
+      return readLocalFileBytes(Uri.parse(url).toFilePath());
+    }
+    return fetchHttpBytes(url);
+  }
+
+  Future<void> _toolbarCopyImagePixels() async {
+    final sel = _composer.selection;
+    if (sel == null) return;
+    final nodes = _document.getNodesInside(sel.base, sel.extent);
+    if (nodes.length != 1 || nodes.first is! ImageNode) return;
+    final node = nodes.first as ImageNode;
+    final bytes = await _readBytesForImageNode(node);
+    if (!mounted) return;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法读取该图片')),
+      );
+      return;
+    }
+    final ext = _extensionFromImageUrl(node.imageUrl);
+    final ok = await writeImageBytesToClipboard(bytes, extension: ext);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('复制图片到剪贴板失败')),
+      );
+    }
+  }
+
+  Future<void> _pasteFromToolbar() async {
+    final img = await readClipboardImageBytes();
+    if (img != null && img.isNotEmpty) {
+      await NoteAttachmentStore.ensureInitialized();
+      final ext = _extensionForRawImageBytes(img);
+      final ref = await NoteAttachmentStore.saveBytes(img, ext);
+      if (!mounted) return;
+      _insertImageAfterPickerResolved(
+        ref: ref,
+        handwriting: false,
+        selectionBeforePick: _composer.selection,
+      );
+      return;
+    }
+    _commonOps.paste();
+  }
+
+  void _toggleSelectedImageWidthHalfFull() {
+    final sel = _composer.selection;
+    if (sel == null) return;
+    final nodes = _document.getNodesInside(sel.base, sel.extent);
+    if (nodes.length != 1 || nodes.first is! ImageNode) return;
+    final node = nodes.first as ImageNode;
+    final cur = miImageWidthFactorFromMetadata(node.metadata);
+    final next = cur < 0.75 ? 1.0 : 0.5;
+    _editor.execute([
+      ReplaceNodeRequest(
+        existingNodeId: node.id,
+        newNode: node.copyWithAddedMetadata({kMiImageWidthFactorKey: next}),
+      ),
+    ]);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _insertImageFromPicker({required bool handwriting}) async {
+    await NoteAttachmentStore.ensureInitialized();
+    final selectionBeforePick = _composer.selection;
+
+    final picked = await _pickGalleryImage();
+    if (picked == null) return;
+    final bytes = picked.bytes;
+    final ext = picked.ext;
+    final ref = await NoteAttachmentStore.saveBytes(bytes, ext);
+    if (!mounted) return;
+
+    final capHandwriting = handwriting;
+    final capRef = ref;
+    final capSel = selectionBeforePick;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _insertImageAfterPickerResolved(
+        ref: capRef,
+        handwriting: capHandwriting,
+        selectionBeforePick: capSel,
+      );
+    });
+  }
+
+  String _guessImageExtension(String path, String? mime) {
+    if (path.isNotEmpty) {
+      final dot = path.lastIndexOf('.');
+      if (dot >= 0 && dot < path.length - 1) {
+        return path.substring(dot + 1).toLowerCase();
+      }
+    }
+    final m = mime?.toLowerCase() ?? '';
+    if (m.contains('png')) return 'png';
+    if (m.contains('webp')) return 'webp';
+    if (m.contains('gif')) return 'gif';
+    return 'jpg';
+  }
+
+  Future<void> _insertVoiceAttachment() async {
+    final selectionBeforeSheet = _composer.selection;
+    final ref = await showVoiceRecordSheet(context);
+    if (ref == null || !mounted) return;
+    final t = DateTime.now();
+    final label =
+        '语音 ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    final node = FileAttachmentNode(
+      id: Editor.createNodeId(),
+      minoteRef: ref,
+      displayLabel: label,
+    );
+    // 与选图一致：等一帧再插入，减少 Activity/Sheet 恢复瞬间 composer 未同步导致的失败。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ok = _insertBlockNodeWithResolvedSelection(
+        blockNode: node,
+        selectionBeforeAsync: selectionBeforeSheet,
+        needCaretHint: '请先点击正文输入区再插入语音',
+      );
+      if (!mounted || !ok) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('语音已插入'), duration: Duration(seconds: 2)),
+      );
+    });
+  }
+
+  void _insertNewTodoBlock() {
+    _insertBlockNodeWithResolvedSelection(
+      blockNode: TaskNode(
+        id: Editor.createNodeId(),
+        text: AttributedText(),
+        isComplete: false,
+      ),
+      selectionBeforeAsync: _composer.selection,
+      needCaretHint: '请先点击正文输入区再插入待办',
+    );
+  }
+
+  /// 当前段为正文/列表时转为待办；已在待办则取消待办（恢复为段落）；其它块类型则插入新待办。
+  void _insertTodo() {
+    final sel = _composer.selection;
+    if (sel == null || sel.base.nodeId != sel.extent.nodeId) {
+      _insertNewTodoBlock();
+      return;
+    }
+    final id = sel.extent.nodeId;
+    final node = _document.getNodeById(id);
+    if (node is TaskNode) {
+      _editor.execute([ConvertTaskToParagraphRequest(nodeId: id)]);
+      setState(() {});
+      _refocusEditor();
+      return;
+    }
+    if (node is ParagraphNode) {
+      _editor.execute([ConvertParagraphToTaskRequest(nodeId: id)]);
+      setState(() {});
+      _refocusEditor();
+      return;
+    }
+    if (node is ListItemNode) {
+      _editor.execute([
+        ReplaceNodeRequest(
+          existingNodeId: id,
+          newNode: TaskNode(
+            id: node.id,
+            text: node.text,
+            isComplete: false,
+            indent: node.indent,
+          ),
+        ),
+      ]);
+      setState(() {});
+      _refocusEditor();
+      return;
+    }
+    _insertNewTodoBlock();
+  }
+
+  void _onBottomToolbarAction(NoteEditorBottomAction action) {
+    switch (action) {
+      case NoteEditorBottomAction.smartLayout:
+        _applySmartLayout();
+        return;
+      case NoteEditorBottomAction.voice:
+        _insertVoiceAttachment();
+        return;
+      case NoteEditorBottomAction.image:
+        _insertImageFromPicker(handwriting: false);
+        return;
+      case NoteEditorBottomAction.handwriting:
+        _insertImageFromPicker(handwriting: true);
+        return;
+      case NoteEditorBottomAction.todo:
+        _insertTodo();
+        return;
+    }
+  }
+
   bool get _canUndo => _editor.history.isNotEmpty;
   bool get _canRedo => _editor.future.isNotEmpty;
+
+  /// 撤销 / 重做由 [Editor] 触发 [FunctionalEditListener] 统一 [setState]；此处不再重复刷帧。
+  void _performUndo() {
+    if (!_canUndo) return;
+    _editor.undo();
+  }
+
+  void _performRedo() {
+    if (!_canRedo) return;
+    _editor.redo();
+  }
 
   void _refocusEditor() => _editorFocusNode.requestFocus();
 
@@ -312,6 +826,11 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     if (brightness == Brightness.dark) {
       return defaultStylesheet.copyWith(
         documentPadding: EdgeInsets.zero,
+        // 不可放在 StyleRule 里：SingleColumnStylesheetStyler 合并样式时不会用新列表覆盖已有 inlineWidgetBuilders。
+        inlineWidgetBuilders: [
+          miInlineImageBuilder,
+          ...defaultInlineWidgetBuilderChain,
+        ],
         addRulesAfter: [
           StyleRule(
             BlockSelector.all,
@@ -373,6 +892,10 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     }
     return defaultStylesheet.copyWith(
       documentPadding: EdgeInsets.zero,
+      inlineWidgetBuilders: [
+        miInlineImageBuilder,
+        ...defaultInlineWidgetBuilderChain,
+      ],
       addRulesAfter: [
         StyleRule(
           BlockSelector.all,
@@ -910,22 +1433,14 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
         actions: _topBarEditingMode
             ? [
                 IconButton(
+                  tooltip: '撤销',
                   icon: const Icon(Icons.undo_rounded),
-                  onPressed: _canUndo
-                      ? () {
-                          _editor.undo();
-                          setState(() {});
-                        }
-                      : null,
+                  onPressed: _canUndo ? _performUndo : null,
                 ),
                 IconButton(
+                  tooltip: '重做',
                   icon: const Icon(Icons.redo_rounded),
-                  onPressed: _canRedo
-                      ? () {
-                          _editor.redo();
-                          setState(() {});
-                        }
-                      : null,
+                  onPressed: _canRedo ? _performRedo : null,
                 ),
                 IconButton(
                   icon: const Icon(Icons.check_rounded),
@@ -983,44 +1498,72 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
             ),
             const SizedBox(height: 4),
             Expanded(
-              child: Stack(
-                clipBehavior: Clip.none,
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(
-                    child: _wrapEditorWithMobileScopes(
-                      SuperEditor(
-                        editor: _editor,
-                        focusNode: _editorFocusNode,
-                        scrollController: _scrollController,
-                        documentLayoutKey: _docLayoutKey,
-                        stylesheet: _stylesheetForTheme(brightness),
-                        selectionStyle: _selectionStyles(brightness, scheme),
-                        documentOverlayBuilders: _caretOverlays(brightness),
-                        componentBuilders: [
-                          const MiBlockquoteComponentBuilder(),
-                          ...defaultComponentBuilders.skip(1),
-                          TaskComponentBuilder(_editor),
-                          const UnknownComponentBuilder(),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (_isBodyEmpty())
-                    Positioned(
-                      top: 6,
-                      left: 20,
-                      right: 20,
-                      child: IgnorePointer(
-                        child: Text(
-                          '开始书写',
-                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                color: scheme.onSurface.withValues(alpha: 0.38),
-                              ),
+              child: KeyedSubtree(
+                key: _editorBodyKey,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: _wrapEditorWithMobileScopes(
+                        SuperEditor(
+                          editor: _editor,
+                          focusNode: _editorFocusNode,
+                          scrollController: _scrollController,
+                          documentLayoutKey: _docLayoutKey,
+                          contentTapDelegateFactories: [
+                            (ctx) => MiImageBlockTapHandler(
+                                  ctx,
+                                  androidControls:
+                                      defaultTargetPlatform == TargetPlatform.android ||
+                                              defaultTargetPlatform == TargetPlatform.fuchsia
+                                          ? _androidEditControls
+                                          : null,
+                                  iosControls: defaultTargetPlatform == TargetPlatform.iOS
+                                      ? _iosEditControls
+                                      : null,
+                                ),
+                            superEditorLaunchLinkTapHandlerFactory,
+                          ],
+                          stylesheet: _stylesheetForTheme(brightness),
+                          selectionStyle: _selectionStyles(brightness, scheme),
+                          // 系统相册/文件选择器会抢走焦点；默认 true 会 ClearSelection，返回后易出现内容已插入但版面不刷新，需再点正文才显示。
+                          // 与官方对「自定义插入面板」的说明一致（见 SuperEditorSelectionPolicies）。
+                          selectionPolicies: const SuperEditorSelectionPolicies(
+                            clearSelectionWhenEditorLosesFocus: false,
+                            clearSelectionWhenImeConnectionCloses: false,
+                          ),
+                          documentOverlayBuilders: _caretOverlays(brightness),
+                          customStylePhases: [_inlineImageBuildersPhase],
+                          componentBuilders: [
+                            const MiBlockquoteComponentBuilder(),
+                            const ParagraphComponentBuilder(),
+                            const ListItemComponentBuilder(),
+                            LocalImageComponentBuilder(_document),
+                            const HorizontalRuleComponentBuilder(),
+                            const FileAttachmentComponentBuilder(),
+                            MiTaskComponentBuilder(_editor),
+                            const UnknownComponentBuilder(),
+                          ],
                         ),
                       ),
                     ),
-                ],
+                    if (_isBodyEmpty())
+                      Positioned(
+                        top: 6,
+                        left: 20,
+                        right: 20,
+                        child: IgnorePointer(
+                          child: Text(
+                            '开始书写',
+                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  color: scheme.onSurface.withValues(alpha: 0.38),
+                                ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
             _BottomFormatToolbar(
@@ -1036,11 +1579,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                   _textFormatMenuOpen = false;
                 });
               },
-              onInsertPlaceholder: (label) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('$label 为占位功能')),
-                );
-              },
+              onBottomAction: _onBottomToolbarAction,
               onTextFormat: _onNoteFormat,
             ),
           ],
@@ -1056,7 +1595,7 @@ class _BottomFormatToolbar extends StatelessWidget {
     required this.textMenuOpen,
     required this.onToggleTextMenu,
     required this.onCloseTextMenu,
-    required this.onInsertPlaceholder,
+    required this.onBottomAction,
     required this.onTextFormat,
   });
 
@@ -1066,7 +1605,7 @@ class _BottomFormatToolbar extends StatelessWidget {
   final bool textMenuOpen;
   final VoidCallback onToggleTextMenu;
   final VoidCallback onCloseTextMenu;
-  final void Function(String label) onInsertPlaceholder;
+  final void Function(NoteEditorBottomAction action) onBottomAction;
   final void Function(NoteEditorFormat) onTextFormat;
 
   @override
@@ -1135,11 +1674,11 @@ class _BottomFormatToolbar extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: [
-        _tb(icon: Icons.auto_fix_high_rounded, color: iconColor, onTap: () => onInsertPlaceholder('智能排版')),
-        _tb(icon: Icons.mic_none_rounded, color: iconColor, onTap: () => onInsertPlaceholder('语音')),
-        _tb(icon: Icons.image_outlined, color: iconColor, onTap: () => onInsertPlaceholder('图片')),
-        _tb(icon: Icons.gesture_rounded, color: iconColor, onTap: () => onInsertPlaceholder('手写')),
-        _tb(icon: Icons.check_box_outlined, color: iconColor, onTap: () => onInsertPlaceholder('待办')),
+        _tb(icon: Icons.auto_fix_high_rounded, color: iconColor, onTap: () => onBottomAction(NoteEditorBottomAction.smartLayout)),
+        _tb(icon: Icons.mic_none_rounded, color: iconColor, onTap: () => onBottomAction(NoteEditorBottomAction.voice)),
+        _tb(icon: Icons.image_outlined, color: iconColor, onTap: () => onBottomAction(NoteEditorBottomAction.image)),
+        _tb(icon: Icons.gesture_rounded, color: iconColor, onTap: () => onBottomAction(NoteEditorBottomAction.handwriting)),
+        _tb(icon: Icons.check_box_outlined, color: iconColor, onTap: () => onBottomAction(NoteEditorBottomAction.todo)),
         _tb(
           icon: Icons.text_fields_rounded,
           color: scheme.primary,

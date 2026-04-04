@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="tech_muyi_minote"
         android:name="${applicationName}"
@@ -30,6 +31,22 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 复制图片到剪贴板（FileProvider URI，避免 super_clipboard 管道 EPIPE） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        <!-- super_clipboard：读取剪贴板图片等仍可能依赖；写入图片已优先走 FileProvider -->
+        <provider
+            android:name="com.superlist.super_native_extensions.DataProvider"
+            android:authorities="com.example.tech_muyi_minote.SuperClipboardDataProvider"
+            android:exported="true"
+            android:grantUriPermissions="true" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
@@ -40,6 +57,19 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- 包可见性：选图（file_picker / 文档选择器） -->
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT"/>
+            <data android:mimeType="image/*"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK"/>
+            <data android:mimeType="image/*"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT"/>
+            <data android:mimeType="image/*"/>
         </intent>
     </queries>
 </manifest>

@@ -41,6 +41,16 @@ dependencies:
   super_editor: 0.3.0-dev.23
   follow_the_leader: 0.0.4+8
 
+  path_provider: ^2.1.5
+  uuid: ^4.5.1
+  image_picker: ^1.1.2
+  record: ^6.2.0
+  path: ^1.9.1
+  # 11.x Android 为 Kotlin 且部分 Gradle 组合下 javac 无法解析插件类；8.x 为 Java 实现，与 GeneratedPluginRegistrant 兼容。
+  file_picker: ">=8.1.0 <9.0.0"
+  super_clipboard: 0.9.1
+  audioplayers: ^6.5.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
