@@ -24,6 +24,8 @@ class NoteAttachmentStore {
 
   static String documentRefFromRecorderOutput(String stopOutput) => stopOutput;
 
+  static Future<void> deleteByRefIfExists(String ref) async {}
+
   static String _mimeForExt(String extension) {
     var ext = extension.trim().toLowerCase();
     if (ext.startsWith('.')) ext = ext.substring(1);

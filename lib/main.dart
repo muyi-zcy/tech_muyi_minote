@@ -699,15 +699,16 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
 
   Future<void> _insertVoiceAttachment() async {
     final selectionBeforeSheet = _composer.selection;
-    final ref = await showVoiceRecordSheet(context);
-    if (ref == null || !mounted) return;
+    final outcome = await showVoiceRecordSheet(context);
+    if (outcome == null || !mounted) return;
     final t = DateTime.now();
     final label =
         '语音 ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
     final node = FileAttachmentNode(
       id: Editor.createNodeId(),
-      minoteRef: ref,
+      minoteRef: outcome.ref,
       displayLabel: label,
+      waveformPeaks: outcome.waveformPeaks,
     );
     // 与选图一致：等一帧再插入，减少 Activity/Sheet 恢复瞬间 composer 未同步导致的失败。
     WidgetsBinding.instance.addPostFrameCallback((_) {

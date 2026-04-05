@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -10,6 +11,7 @@ class FileAttachmentNode extends BlockNode {
     required this.id,
     required this.minoteRef,
     required this.displayLabel,
+    this.waveformPeaks,
     super.metadata,
   }) {
     initAddToMetadata({'blockType': const NamedAttribution('fileAttachment')});
@@ -21,6 +23,9 @@ class FileAttachmentNode extends BlockNode {
   final String minoteRef;
   final String displayLabel;
 
+  /// 录音时采样的归一化峰值（约 72 点），用于波形展示；旧笔记为 null。
+  final List<double>? waveformPeaks;
+
   @override
   String? copyContent(NodeSelection selection) {
     if (selection is! UpstreamDownstreamNodeSelection) {
@@ -31,7 +36,9 @@ class FileAttachmentNode extends BlockNode {
 
   @override
   bool hasEquivalentContent(DocumentNode other) {
-    return other is FileAttachmentNode && minoteRef == other.minoteRef;
+    return other is FileAttachmentNode &&
+        minoteRef == other.minoteRef &&
+        listEquals(waveformPeaks, other.waveformPeaks);
   }
 
   @override
@@ -40,6 +47,7 @@ class FileAttachmentNode extends BlockNode {
       id: id,
       minoteRef: minoteRef,
       displayLabel: displayLabel,
+      waveformPeaks: waveformPeaks,
       metadata: {...metadata, ...newProperties},
     );
   }
@@ -50,6 +58,7 @@ class FileAttachmentNode extends BlockNode {
       id: id,
       minoteRef: minoteRef,
       displayLabel: displayLabel,
+      waveformPeaks: waveformPeaks,
       metadata: newMetadata,
     );
   }
@@ -59,6 +68,7 @@ class FileAttachmentNode extends BlockNode {
       id: id,
       minoteRef: minoteRef,
       displayLabel: displayLabel,
+      waveformPeaks: waveformPeaks == null ? null : List<double>.from(waveformPeaks!),
       metadata: Map.from(metadata),
     );
   }
@@ -70,10 +80,16 @@ class FileAttachmentNode extends BlockNode {
           runtimeType == other.runtimeType &&
           id == other.id &&
           minoteRef == other.minoteRef &&
-          displayLabel == other.displayLabel;
+          displayLabel == other.displayLabel &&
+          listEquals(waveformPeaks, other.waveformPeaks);
 
   @override
-  int get hashCode => id.hashCode ^ minoteRef.hashCode ^ displayLabel.hashCode;
+  int get hashCode => Object.hash(
+        id,
+        minoteRef,
+        displayLabel,
+        Object.hashAll(waveformPeaks ?? const <double>[]),
+      );
 }
 
 class FileAttachmentComponentBuilder implements ComponentBuilder {
@@ -88,6 +104,7 @@ class FileAttachmentComponentBuilder implements ComponentBuilder {
       nodeId: node.id,
       minoteRef: node.minoteRef,
       displayLabel: node.displayLabel,
+      waveformPeaks: node.waveformPeaks,
       selectionColor: const Color(0x00000000),
     );
   }
@@ -104,6 +121,7 @@ class FileAttachmentComponentBuilder implements ComponentBuilder {
       componentKey: componentContext.componentKey,
       minoteRef: componentViewModel.minoteRef,
       displayLabel: componentViewModel.displayLabel,
+      waveformPeaks: componentViewModel.waveformPeaks,
       selection: componentViewModel.selection?.nodeSelection as UpstreamDownstreamNodeSelection?,
       selectionColor: componentViewModel.selectionColor,
     );
@@ -118,6 +136,7 @@ class FileAttachmentComponentViewModel extends SingleColumnLayoutComponentViewMo
     super.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
     required this.minoteRef,
     required this.displayLabel,
+    this.waveformPeaks,
     DocumentNodeSelection? selection,
     Color selectionColor = Colors.transparent,
   }) {
@@ -127,6 +146,7 @@ class FileAttachmentComponentViewModel extends SingleColumnLayoutComponentViewMo
 
   final String minoteRef;
   final String displayLabel;
+  final List<double>? waveformPeaks;
 
   @override
   FileAttachmentComponentViewModel copy() {
@@ -136,6 +156,7 @@ class FileAttachmentComponentViewModel extends SingleColumnLayoutComponentViewMo
       padding: padding,
       minoteRef: minoteRef,
       displayLabel: displayLabel,
+      waveformPeaks: waveformPeaks,
       selection: selection,
       selectionColor: selectionColor,
     );
@@ -150,12 +171,20 @@ class FileAttachmentComponentViewModel extends SingleColumnLayoutComponentViewMo
           nodeId == other.nodeId &&
           minoteRef == other.minoteRef &&
           displayLabel == other.displayLabel &&
+          listEquals(waveformPeaks, other.waveformPeaks) &&
           selection == other.selection &&
           selectionColor == other.selectionColor;
 
   @override
-  int get hashCode =>
-      super.hashCode ^ nodeId.hashCode ^ minoteRef.hashCode ^ displayLabel.hashCode ^ selection.hashCode;
+  int get hashCode => Object.hash(
+        super.hashCode,
+        nodeId,
+        minoteRef,
+        displayLabel,
+        Object.hashAll(waveformPeaks ?? const <double>[]),
+        selection,
+        selectionColor,
+      );
 }
 
 class FileAttachmentComponent extends StatelessWidget {
@@ -164,6 +193,7 @@ class FileAttachmentComponent extends StatelessWidget {
     required this.componentKey,
     required this.minoteRef,
     required this.displayLabel,
+    this.waveformPeaks,
     this.selectionColor = Colors.blue,
     this.selection,
   });
@@ -171,12 +201,12 @@ class FileAttachmentComponent extends StatelessWidget {
   final GlobalKey componentKey;
   final String minoteRef;
   final String displayLabel;
+  final List<double>? waveformPeaks;
   final Color selectionColor;
   final UpstreamDownstreamNodeSelection? selection;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     // 不可使用 [SelectableBox]：其实现为 `IgnorePointer` 包住子组件，触摸永远不会到达
     // [VoiceAttachmentPlaybackTile] 的 [InkWell]（故「点了没反应、也无日志」）。
     // 选区高亮用顶层 `IgnorePointer` 装饰，使点击穿透到下方语音条。
@@ -189,9 +219,7 @@ class FileAttachmentComponent extends StatelessWidget {
           child: VoiceAttachmentPlaybackTile(
             minoteRef: minoteRef,
             displayLabel: displayLabel,
-            borderColor: scheme.outline.withValues(alpha: 0.35),
-            fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-            iconColor: scheme.primary,
+            waveformPeaks: waveformPeaks,
           ),
         ),
         if (isSelected)

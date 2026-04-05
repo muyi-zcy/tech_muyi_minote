@@ -101,6 +101,16 @@ class NoteAttachmentStore {
     return p.join(dir.path, name);
   }
 
+  /// 删除 [ref] 对应的附件文件（若存在）。用于取消未插入正文的录音等。
+  static Future<void> deleteByRefIfExists(String ref) async {
+    final path = await getLocalPath(ref);
+    if (path == null) return;
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
   /// [stopOutput] 为 `AudioRecorder.stop()` 的返回值（IO 为绝对路径，Web 为 `blob:` URL）。
   static String documentRefFromRecorderOutput(String stopOutput) {
     if (stopOutput.startsWith('blob:') || stopOutput.startsWith('http')) {
