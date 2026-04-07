@@ -52,6 +52,7 @@ class LocalImageComponentBuilder implements ComponentBuilder {
     );
 
     final factor = node is ImageNode ? miImageWidthFactorFromMetadata(node.metadata) : 1.0;
+    final imageAlign = node is ImageNode ? _miImageAlignFromMetadata(node.metadata) : Alignment.centerLeft;
     Widget layoutChild = image;
     if (caption != null) {
       final scheme = Theme.of(componentContext.context).colorScheme;
@@ -76,15 +77,33 @@ class LocalImageComponentBuilder implements ComponentBuilder {
     Widget laidOut = layoutChild;
     if (factor < 0.99) {
       laidOut = Align(
-        alignment: Alignment.centerLeft,
+        alignment: imageAlign,
         child: FractionallySizedBox(
           widthFactor: factor,
-          alignment: Alignment.centerLeft,
+          alignment: imageAlign,
           child: layoutChild,
         ),
+      );
+    } else {
+      laidOut = Align(
+        alignment: imageAlign,
+        child: layoutChild,
       );
     }
 
     return laidOut;
+  }
+}
+
+Alignment _miImageAlignFromMetadata(Map<String, dynamic> metadata) {
+  final align = metadata['textAlign'];
+  switch (align) {
+    case 'center':
+      return Alignment.center;
+    case 'right':
+      return Alignment.centerRight;
+    case 'left':
+    default:
+      return Alignment.centerLeft;
   }
 }

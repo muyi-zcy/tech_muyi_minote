@@ -26,6 +26,7 @@ import 'note_attachment_store.dart';
 import 'platform_file_read_bytes.dart';
 import 'note_editor_format.dart';
 import 'note_file_attachment.dart';
+import 'note_share_export.dart';
 import 'voice_record_sheet.dart';
 
 void main() {
@@ -703,7 +704,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     if (outcome == null || !mounted) return;
     final t = DateTime.now();
     final label =
-        '语音 ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+        '语音 ${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
     final node = FileAttachmentNode(
       id: Editor.createNodeId(),
       minoteRef: outcome.ref,
@@ -957,6 +958,19 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     );
   }
 
+  List<ComponentBuilder> _editorComponentBuilders() {
+    return [
+      const MiBlockquoteComponentBuilder(),
+      const ParagraphComponentBuilder(),
+      const ListItemComponentBuilder(),
+      LocalImageComponentBuilder(_document),
+      const HorizontalRuleComponentBuilder(),
+      const FileAttachmentComponentBuilder(),
+      MiTaskComponentBuilder(_editor),
+      const UnknownComponentBuilder(),
+    ];
+  }
+
   void _applyBlockType(Attribution blockType) {
     final sel = _composer.selection;
     if (sel == null || sel.base.nodeId != sel.extent.nodeId) return;
@@ -974,13 +988,28 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
   void _applyAlignment(TextAlign alignment) {
     final sel = _composer.selection;
     if (sel == null || sel.base.nodeId != sel.extent.nodeId) return;
-    _ensureParagraphForBlockOps();
     final id = sel.extent.nodeId;
     final node = _document.getNodeById(id);
-    if (node is! ParagraphNode) return;
-    _editor.execute([
-      ChangeParagraphAlignmentRequest(nodeId: id, alignment: alignment),
-    ]);
+    final alignName = switch (alignment) {
+      TextAlign.center => 'center',
+      TextAlign.right => 'right',
+      TextAlign.justify => 'justify',
+      _ => 'left',
+    };
+    if (node is ParagraphNode) {
+      _editor.execute([
+        ChangeParagraphAlignmentRequest(nodeId: id, alignment: alignment),
+      ]);
+    } else if (node is ImageNode) {
+      _editor.execute([
+        ReplaceNodeRequest(
+          existingNodeId: node.id,
+          newNode: node.copyWithAddedMetadata({'textAlign': alignName}),
+        ),
+      ]);
+    } else {
+      return;
+    }
     setState(() {});
     _refocusEditor();
   }
@@ -1175,16 +1204,15 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
       barrierColor: Colors.black.withValues(alpha: 0.4),
       isScrollControlled: true,
       builder: (sheetContext) {
-        Widget option(String label) {
+        Widget option(String label, Future<void> Function() action) {
           return Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(sheetContext);
+                await Future<void>.delayed(Duration.zero);
                 if (!pageContext.mounted) return;
-                ScaffoldMessenger.of(pageContext).showSnackBar(
-                  SnackBar(content: Text('$label 为占位功能')),
-                );
+                await action();
               },
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 24),
@@ -1233,10 +1261,50 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  option('以文字形式分享'),
-                  option('以图片形式分享'),
-                  option('以副本形式分享'),
-                  option('以 Markdown 格式导出'),
+                  option(
+                    '以文字形式分享',
+                    () => shareNoteAsPlainText(
+                      pageContext,
+                      _titleController.text,
+                      _document,
+                    ),
+                  ),
+                  option(
+                    '以图片形式分享',
+                    () => shareNoteAsImage(
+                      pageContext,
+                      _titleController.text,
+                      _formatNow(),
+                      _noteCardTypeLabel,
+                      _document,
+                      theme,
+                      _stylesheetForTheme(theme.brightness),
+                      [_inlineImageBuildersPhase],
+                      _editorComponentBuilders(),
+                    ),
+                  ),
+                  option(
+                    '保存图片到本地',
+                    () => saveNoteImageToLocal(
+                      pageContext,
+                      _titleController.text,
+                      _formatNow(),
+                      _noteCardTypeLabel,
+                      _document,
+                      theme,
+                      _stylesheetForTheme(theme.brightness),
+                      [_inlineImageBuildersPhase],
+                      _editorComponentBuilders(),
+                    ),
+                  ),
+                  option(
+                    '以 Markdown 格式导出',
+                    () => shareNoteAsMarkdownFile(
+                      pageContext,
+                      _titleController.text,
+                      _document,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
@@ -1485,11 +1553,11 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                       fontWeight: FontWeight.w600,
                       color: scheme.onSurface.withValues(alpha: 0.38),
                     ),
-                contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 '${_formatNow()} | ${_characterCount()}字',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1536,16 +1604,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                           ),
                           documentOverlayBuilders: _caretOverlays(brightness),
                           customStylePhases: [_inlineImageBuildersPhase],
-                          componentBuilders: [
-                            const MiBlockquoteComponentBuilder(),
-                            const ParagraphComponentBuilder(),
-                            const ListItemComponentBuilder(),
-                            LocalImageComponentBuilder(_document),
-                            const HorizontalRuleComponentBuilder(),
-                            const FileAttachmentComponentBuilder(),
-                            MiTaskComponentBuilder(_editor),
-                            const UnknownComponentBuilder(),
-                          ],
+                          componentBuilders: _editorComponentBuilders(),
                         ),
                       ),
                     ),
