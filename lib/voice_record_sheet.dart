@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 
+import 'mi_app_toast.dart';
 import 'note_attachment_store.dart';
 
 /// 录音完成结果：附件引用 + 归一化波形峰值（用于正文条与详情页展示）。
@@ -240,9 +241,7 @@ class _VoiceRecordSheetBodyState extends State<_VoiceRecordSheetBody> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('暂停/继续失败：$e')),
-        );
+        showAppToastFail(context, '暂停/继续失败：$e');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -272,9 +271,7 @@ class _VoiceRecordSheetBodyState extends State<_VoiceRecordSheetBody> {
 
       if (out == null || out.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('未生成录音文件')),
-          );
+          showAppToastWarning(context, '未生成录音文件');
         }
         return;
       }
@@ -287,9 +284,7 @@ class _VoiceRecordSheetBodyState extends State<_VoiceRecordSheetBody> {
             debugPrint('MiNote record stop: file missing or empty ref=$ref out=$out');
           }
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('录音文件未写入或为空，请重试')),
-            );
+            showAppToastFail(context, '录音文件未写入或为空，请重试');
           }
           return;
         }

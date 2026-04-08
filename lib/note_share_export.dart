@@ -7,6 +7,7 @@ import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:super_editor/super_editor.dart';
 
+import 'mi_app_toast.dart';
 import 'note_file_attachment.dart';
 import 'share_note_platform.dart';
 
@@ -327,9 +328,7 @@ Future<void> shareNoteAsPlainText(
   final text = buildNotePlainText(title, doc);
   if (text.isEmpty) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('笔记为空，无法分享')),
-      );
+      showAppToastWarning(context, '笔记为空，无法分享');
     }
     return;
   }
@@ -337,9 +336,7 @@ Future<void> shareNoteAsPlainText(
     await Share.share(text, subject: title.trim().isEmpty ? '笔记' : title.trim());
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('分享失败：$e')),
-      );
+      showAppToastFail(context, '分享失败：$e');
     }
   }
 }
@@ -352,9 +349,7 @@ Future<void> shareNoteAsMarkdownFile(
   final md = buildNoteMarkdown(title, doc);
   if (md.isEmpty) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('笔记为空，无法导出')),
-      );
+      showAppToastWarning(context, '笔记为空，无法导出');
     }
     return;
   }
@@ -369,9 +364,7 @@ Future<void> shareNoteAsMarkdownFile(
     );
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('导出失败：$e')),
-      );
+      showAppToastFail(context, '导出失败：$e');
     }
   }
 }
@@ -394,9 +387,7 @@ Future<void> shareNoteAsCopyFile(
     );
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('分享副本失败：$e')),
-      );
+      showAppToastFail(context, '分享副本失败：$e');
     }
   }
 }
@@ -414,17 +405,13 @@ Future<void> shareNoteAsImage(
 ) async {
   if (kIsWeb) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('网页版暂不支持以图片形式分享')),
-      );
+      showAppToastWarning(context, '网页版暂不支持以图片形式分享');
     }
     return;
   }
 
   if (title.trim().isEmpty && doc.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('笔记为空，无法导出图片')),
-    );
+    showAppToastWarning(context, '笔记为空，无法导出图片');
     return;
   }
 
@@ -442,22 +429,18 @@ Future<void> shareNoteAsImage(
     );
     if (!context.mounted) return;
     if (png == null || png.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('生成分享图片失败')),
-      );
+      showAppToastFail(context, '生成分享图片失败');
       return;
     }
     await sharePngBytes(png);
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('分享图片失败：$e')),
-      );
+      showAppToastFail(context, '分享图片失败：$e');
     }
   }
 }
 
-Future<void> saveNoteImageToLocal(
+Future<void> saveNoteImageToGallery(
   BuildContext context,
   String title,
   String timeText,
@@ -469,9 +452,7 @@ Future<void> saveNoteImageToLocal(
   List<ComponentBuilder> componentBuilders,
 ) async {
   if (title.trim().isEmpty && doc.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('笔记为空，无法保存图片')),
-    );
+    showAppToastWarning(context, '笔记为空，无法保存图片');
     return;
   }
 
@@ -489,25 +470,19 @@ Future<void> saveNoteImageToLocal(
     );
     if (!context.mounted) return;
     if (png == null || png.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('生成图片失败')),
-      );
+      showAppToastFail(context, '生成图片失败');
       return;
     }
     final safeTitle = title.trim().replaceAll(RegExp(r'[\\/:*?"<>|\n\r]'), '_');
-    final path = await savePngBytesToLocal(
+    await savePngBytesToGallery(
       png,
       suggestedBaseName: safeTitle.isEmpty ? null : safeTitle,
     );
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('图片已保存到本地：$path')),
-    );
+    showAppToastSuccess(context, '图片已保存到相册');
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存图片失败：$e')),
-      );
+      showAppToastFail(context, '保存图片失败：$e');
     }
   }
 }

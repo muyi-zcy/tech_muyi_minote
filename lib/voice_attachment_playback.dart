@@ -5,6 +5,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'mi_app_toast.dart';
 import 'note_attachment_store.dart';
 import 'voice_attachment_detail_sheet.dart';
 import 'voice_player_common.dart';
@@ -98,7 +99,7 @@ class _VoiceAttachmentPlaybackTileState extends State<VoiceAttachmentPlaybackTil
           widget.minoteRef,
           (msg) {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+              showAppToastFail(context, msg);
             }
           },
         );
@@ -117,9 +118,7 @@ class _VoiceAttachmentPlaybackTileState extends State<VoiceAttachmentPlaybackTil
           final path = await NoteAttachmentStore.getReadyLocalPath(widget.minoteRef);
           if (path == null) {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('找不到音频或文件为空')),
-              );
+              showAppToastWarning(context, '找不到音频或文件为空');
             }
             return;
           }
@@ -138,9 +137,7 @@ class _VoiceAttachmentPlaybackTileState extends State<VoiceAttachmentPlaybackTil
         ),
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('无法播放：$e')),
-        );
+        showAppToastFail(context, '无法播放：$e');
       }
     }
   }

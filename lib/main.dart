@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatf
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:tdesign_flutter/tdesign_flutter.dart';
 
 import 'blockquote_newline_command.dart';
 import 'document_selection_sanitize.dart';
@@ -20,6 +21,7 @@ import 'local_image_component.dart';
 import 'mi_blockquote_component.dart';
 import 'mi_inline_image.dart';
 import 'mi_inline_image_builders_phase.dart';
+import 'mi_app_toast.dart';
 import 'mi_task_component.dart';
 import 'normalized_paste_handler.dart';
 import 'note_attachment_store.dart';
@@ -48,6 +50,8 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final td = TDThemeData.defaultData();
+    final tdDark = td.dark;
     return MaterialApp(
       title: 'MiNote',
       debugShowCheckedModeBanner: false,
@@ -58,6 +62,7 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
+        extensions: <ThemeExtension<dynamic>>[td],
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -65,6 +70,7 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        extensions: <ThemeExtension<dynamic>>[tdDark ?? td],
       ),
       home: const XiaomiStyleNoteEditorPage(),
     );
@@ -379,9 +385,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     }
     if (toDelete.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('没有需要合并的连续空段落')),
-        );
+        showAppToastWarning(context, '没有需要合并的连续空段落');
       }
       return;
     }
@@ -390,9 +394,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     }
     setState(() {});
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已合并 ${toDelete.length} 处连续空段落')),
-      );
+      showAppToastSuccess(context, '已合并 ${toDelete.length} 处连续空段落');
     }
   }
 
@@ -414,9 +416,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
         return (bytes: bytes, ext: _extensionFromPlatformFile(f));
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('未能读取图片数据，请换一张图或稍后重试')),
-        );
+        showAppToastFail(context, '未能读取图片数据，请换一张图或稍后重试');
       }
       return null;
     }
@@ -481,9 +481,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     }
     anchor = sanitizeDocumentSelection(_document, anchor);
     if (anchor == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(needCaretHint)),
-      );
+      showAppToastWarning(context, needCaretHint);
       return false;
     }
     if (rawSelection == null || rawSelection != anchor) {
@@ -612,18 +610,14 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
     final bytes = await _readBytesForImageNode(node);
     if (!mounted) return;
     if (bytes == null || bytes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('无法读取该图片')),
-      );
+      showAppToastFail(context, '无法读取该图片');
       return;
     }
     final ext = _extensionFromImageUrl(node.imageUrl);
     final ok = await writeImageBytesToClipboard(bytes, extension: ext);
     if (!mounted) return;
     if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('复制图片到剪贴板失败')),
-      );
+      showAppToastFail(context, '复制图片到剪贴板失败');
     }
   }
 
@@ -720,8 +714,10 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
         needCaretHint: '请先点击正文输入区再插入语音',
       );
       if (!mounted || !ok) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('语音已插入'), duration: Duration(seconds: 2)),
+      showAppToastSuccess(
+        context,
+        '语音已插入',
+        duration: const Duration(seconds: 2),
       );
     });
   }
@@ -1284,8 +1280,8 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                     ),
                   ),
                   option(
-                    '保存图片到本地',
-                    () => saveNoteImageToLocal(
+                    '保存图片到相册',
+                    () => saveNoteImageToGallery(
                       pageContext,
                       _titleController.text,
                       _formatNow(),
@@ -1452,9 +1448,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
       );
 
       if (!buttonContext.mounted || selected == null) return;
-      ScaffoldMessenger.of(buttonContext).showSnackBar(
-        SnackBar(content: Text('$selected 为占位功能')),
-      );
+      showAppToast(buttonContext, '$selected 为占位功能');
     }
 
     return Builder(
@@ -1526,9 +1520,7 @@ class _XiaomiStyleNoteEditorPageState extends State<XiaomiStyleNoteEditorPage>
                   icon: const Icon(Icons.palette_outlined),
                   tooltip: '笔记样式',
                   onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('笔记背景/样式为占位功能')),
-                    );
+                    showAppToast(context, '笔记背景/样式为占位功能');
                   },
                 ),
                 _buildNoteMoreMenu(context),

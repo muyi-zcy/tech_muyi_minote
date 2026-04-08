@@ -12,6 +12,6 @@ Future<void> sharePngBytes(Uint8List bytes) async {
   ]);
 }
 
-Future<String> savePngBytesToLocal(Uint8List bytes, {String? suggestedBaseName}) async {
-  throw UnsupportedError('当前平台暂不支持保存图片到本地');
+Future<void> savePngBytesToGallery(Uint8List bytes, {String? suggestedBaseName}) async {
+  throw UnsupportedError('当前平台暂不支持保存图片到相册');
 }

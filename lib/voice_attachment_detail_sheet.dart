@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'mi_app_toast.dart';
 import 'note_attachment_store.dart';
 import 'voice_player_common.dart';
 
@@ -25,7 +26,7 @@ Future<void> showVoiceAttachmentDetailSheet(
     minoteRef,
     (msg) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        showAppToastFail(context, msg);
       }
     },
   );
@@ -364,9 +365,7 @@ class _VoiceDetailSheetBodyState extends State<_VoiceDetailSheetBody> {
                         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
                       ),
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('暂无语音转文字')),
-                        );
+                        showAppToast(context, '暂无语音转文字');
                       },
                       child: const Text('显示文本'),
                     ),
@@ -416,9 +415,7 @@ class _VoiceDetailSheetBodyState extends State<_VoiceDetailSheetBody> {
                     children: [
                       IconButton(
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('书签功能开发中')),
-                          );
+                          showAppToast(context, '书签功能开发中');
                         },
                         icon: Icon(Icons.outlined_flag, color: Colors.white.withValues(alpha: 0.85)),
                       ),
